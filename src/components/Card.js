@@ -24,9 +24,7 @@ const Card = ({ occasion, toggle, setToggle, setOccasion }) => {
         <p className='card__cost'>
           <strong>
             {ethers.utils.formatUnits(occasion.cost.toString(), 'ether')}
-          </strong>
-          ETH
-        </p>
+          </strong> ETH</p>
 
         {occasion.tickets.toString() === "0" ? (
           <button

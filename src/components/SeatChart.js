@@ -1,48 +1,80 @@
-import { useEffect, useState } from 'react'
-
-// Import Components
+import { useEffect, useState, useCallback } from 'react'
+import PropTypes from 'prop-types'
 import Seat from './Seat'
-
-// Import Assets
 import close from '../assets/close.svg'
 
 const SeatChart = ({ occasion, tokenMaster, provider, setToggle }) => {
-  const [seatsTaken, setSeatsTaken] = useState(false)
-  const [hasSold, setHasSold] = useState(false)
+  const [seatsTaken, setSeatsTaken] = useState([])
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState(null)
+  const [success, setSuccess] = useState(false)
 
-  const getSeatsTaken = async () => {
-    const seatsTaken = await tokenMaster.getSeatsTaken(occasion.id)
-    setSeatsTaken(seatsTaken)
-  }
+  const getSeatsTaken = useCallback(async () => {
+    try {
+      const seats = await tokenMaster.getSeatsTaken(occasion.id)
+      setSeatsTaken(seats)
+      setError(null)
+    } catch (err) {
+      setError('Failed to load seat data')
+      console.error(err)
+    }
+  }, [tokenMaster, occasion.id])
 
-  const buyHandler = async (_seat) => {
-    setHasSold(false)
+  const buyHandler = useCallback(async (seat) => {
+    setIsLoading(true)
+    setError(null)
+    setSuccess(false)
+    
+    try {
+      const signer = provider.getSigner()
+      const gasEstimate = await tokenMaster
+        .connect(signer)
+        .estimateGas.mint(occasion.id, seat, { value: occasion.cost })
 
-    const signer = await provider.getSigner()
-    const transaction = await tokenMaster.connect(signer).mint(occasion.id, _seat, { value: occasion.cost })
-    await transaction.wait()
+      const tx = await tokenMaster
+        .connect(signer)
+        .mint(occasion.id, seat, { 
+          value: occasion.cost,
+          gasLimit: gasEstimate.mul(120).div(100)
+        })
 
-    setHasSold(true)
-  }
+      await tx.wait()
+      setSuccess(true)
+      getSeatsTaken()
+    } catch (err) {
+      setError(err.reason || 'Purchase failed')
+      console.error(err)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [tokenMaster, provider, occasion, getSeatsTaken])
 
   useEffect(() => {
     getSeatsTaken()
-  }, [hasSold])
+  }, [getSeatsTaken])
 
   return (
     <div className="occasion">
       <div className="occasion__seating">
         <h1>{occasion.name} Seating Map</h1>
 
-        <button onClick={() => setToggle(false)} className="occasion__close">
+        <button 
+          onClick={() => !isLoading && setToggle(false)} 
+          className="occasion__close"
+          disabled={isLoading}
+        >
           <img src={close} alt="Close" />
         </button>
+
+        {error && <div className="error-banner">{error}</div>}
+        {success && <div className="success-banner">Ticket purchased successfully!</div>}
 
         <div className="occasion__stage">
           <strong>STAGE</strong>
         </div>
 
-        {seatsTaken && Array(25).fill(1).map((e, i) =>
+        {/* Left Section - 25 seats (5x5 grid) */}
+        {seatsTaken.length > 0 && Array(25).fill(1).map((_, i) =>
           <Seat
             i={i}
             step={1}
@@ -52,15 +84,17 @@ const SeatChart = ({ occasion, tokenMaster, provider, setToggle }) => {
             maxRows={5}
             seatsTaken={seatsTaken}
             buyHandler={buyHandler}
-            key={i}
+            disabled={isLoading}
+            key={`left-${i}`}
           />
         )}
 
-        <div className="occasion__spacer--1 ">
+        <div className="occasion__spacer--1">
           <strong>WALKWAY</strong>
         </div>
 
-        {seatsTaken && Array(Number(occasion.maxTickets) - 50).fill(1).map((e, i) =>
+        {/* Center Section - Dynamic width */}
+        {seatsTaken.length > 0 && Array(Number(occasion.maxTickets) - 50).fill(1).map((_, i) =>
           <Seat
             i={i}
             step={26}
@@ -70,7 +104,8 @@ const SeatChart = ({ occasion, tokenMaster, provider, setToggle }) => {
             maxRows={15}
             seatsTaken={seatsTaken}
             buyHandler={buyHandler}
-            key={i}
+            disabled={isLoading}
+            key={`center-${i}`}
           />
         )}
 
@@ -78,7 +113,8 @@ const SeatChart = ({ occasion, tokenMaster, provider, setToggle }) => {
           <strong>WALKWAY</strong>
         </div>
 
-        {seatsTaken && Array(25).fill(1).map((e, i) =>
+        {/* Right Section - 25 seats (5x5 grid) */}
+        {seatsTaken.length > 0 && Array(25).fill(1).map((_, i) =>
           <Seat
             i={i}
             step={(Number(occasion.maxTickets) - 24)}
@@ -88,12 +124,31 @@ const SeatChart = ({ occasion, tokenMaster, provider, setToggle }) => {
             maxRows={5}
             seatsTaken={seatsTaken}
             buyHandler={buyHandler}
-            key={i}
+            disabled={isLoading}
+            key={`right-${i}`}
           />
         )}
       </div>
-    </div >
-  );
+
+      {isLoading && (
+        <div className="overlay">
+          <div className="loader">Processing transaction...</div>
+        </div>
+      )}
+    </div>
+  )
 }
 
-export default SeatChart;
+SeatChart.propTypes = {
+  occasion: PropTypes.shape({
+    id: PropTypes.number.isRequired,
+    name: PropTypes.string.isRequired,
+    maxTickets: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired,
+    cost: PropTypes.oneOfType([PropTypes.string, PropTypes.number]).isRequired
+  }).isRequired,
+  tokenMaster: PropTypes.object.isRequired,
+  provider: PropTypes.object.isRequired,
+  setToggle: PropTypes.func.isRequired
+}
+
+export default SeatChart
